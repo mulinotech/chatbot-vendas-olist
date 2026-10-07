@@ -107,3 +107,28 @@ export async function fetchStoreProduct(url: string): Promise<StoreProduct | nul
 export function buildCartUrl(items: { variantId: number; quantity: number }[]): string {
   return `${STORE_URL}/comprar/${items.map((i) => `${i.variantId}-${i.quantity}`).join(',')}/`
 }
+
+export type CondicoesLoja = { descontoPix: number | null; parcelasMax: number; parcelasSemJuros: number }
+
+/** Lê as condições de pagamento exibidas na página de um produto da loja (PIX e parcelamento). */
+export async function fetchStorePaymentConditions(productUrl: string): Promise<CondicoesLoja | null> {
+  const html = await fetchHtml(productUrl)
+  if (!html) return null
+  for (const match of html.matchAll(/data-variants=(?:"([^"]*)"|'([^']*)')/g)) {
+    try {
+      const variant = JSON.parse(decodeEntities(match[1] ?? match[2]))[0]
+      if (!variant?.installments_data) continue
+      const planos = Object.values(JSON.parse(variant.installments_data))[0] as Record<string, { without_interests: boolean }>
+      const parcelas = Object.keys(planos).map(Number).sort((a, b) => a - b)
+      const pix = Number(String(variant.price_with_payment_discount_short ?? '').replace(/[^\d,]/g, '').replace(',', '.'))
+      return {
+        descontoPix: pix && variant.price_number ? Math.round((1 - pix / variant.price_number) * 100) : null,
+        parcelasMax: parcelas.at(-1) ?? 1,
+        parcelasSemJuros: parcelas.filter((p) => planos[p]?.without_interests).at(-1) ?? 1,
+      }
+    } catch {
+      // card com JSON malformado: tenta o próximo
+    }
+  }
+  return null
+}

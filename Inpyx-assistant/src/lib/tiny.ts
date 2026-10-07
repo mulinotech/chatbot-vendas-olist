@@ -151,3 +151,17 @@ export async function listActiveTinyProducts(token?: string): Promise<TinyProduc
 export const getTinyProduct = (id: number, token?: string) => tinyGet<TinyProductDetail>(`/produtos/${id}`, { token })
 
 export const getTinyStock = (id: number, token?: string) => tinyGet<TinyStock>(`/estoque/${id}`, { token })
+
+export type TinyFormaAtiva = { id: number; nome: string }
+
+const listarAtivos = async (path: string): Promise<TinyFormaAtiva[]> => {
+  const { itens } = await tinyGet<{ itens: { id: number; nome: string; situacao: string }[] }>(path)
+  // situacao "1" = ativa no ERP; remove nomes repetidos (ex: dois cadastros "Correios")
+  const nomes = new Set<string>()
+  return itens
+    .filter((i) => i.situacao === '1' && !nomes.has(i.nome) && nomes.add(i.nome))
+    .map(({ id, nome }) => ({ id, nome }))
+}
+
+export const listarFormasPagamentoAtivas = () => listarAtivos('/formas-pagamento?limit=100')
+export const listarFormasEnvioAtivas = () => listarAtivos('/formas-envio?limit=100')

@@ -10,6 +10,7 @@ import { consultarEstoque } from '../tools/consultarEstoque'
 import { solicitarVendedor } from '../tools/solicitarVendedor'
 import { gerarOrcamento } from '../tools/gerarOrcamento'
 import { salvarNomeCliente } from '../tools/salvarNomeCliente'
+import { consultarCondicoesComerciais } from '../tools/consultarCondicoesComerciais'
 import { nomeDoCliente, nomeDoPerfil } from '../lib/cliente'
 
 export default new Conversation({
@@ -251,6 +252,8 @@ Se o cliente ficar **15 minutos sem responder** após uma recomendação, reenga
 4. Se o cliente pedir um **orçamento** e o estoque atender, gere o PDF com **gerarOrcamento** (ele confere o estoque de novo e envia o arquivo com o link do carrinho). Avise com uma frase curta que o orçamento segue em anexo. Se for pedido parcial, ofereça o orçamento das unidades disponíveis.
 5. Se o cliente aceitar o vendedor, chame **solicitarVendedor** com um resumo completo (produtos, SKUs, quantidades, contexto). No WhatsApp o telefone já é conhecido; em outros canais, peça um WhatsApp para contato.
 
+**Quando o cliente pergunta sobre formas de pagamento, parcelamento, boleto, frete ou formas de envio:** chame **consultarCondicoesComerciais** (lê as condições do site e do ERP na hora). Para compra pelo site, apresente as condições do site. Se o cliente quiser negociar volume ou pagar de outra forma (ex: boleto para empresa), conte as formas aceitas em pedidos com vendedor e ofereça o encaminhamento.
+
 **Quando o cliente quer falar com uma pessoa** ou o assunto foge do que você resolve (troca, devolução, problema com pedido): ofereça o encaminhamento e use **solicitarVendedor**.
 
 **Aja antes de prometer:** nunca termine uma mensagem com "vou buscar", "vou verificar" ou "já te mando". Se precisa de produto, preço ou estoque, chame a ferramenta (searchProducts, consultarEstoque) ANTES de responder e entregue o resultado na mesma resposta. O cliente não recebe nada depois que você termina de falar.
@@ -399,7 +402,7 @@ Você AINDA NÃO SABE o nome do cliente. Pergunte com quem está falando logo no
     const runBila = (model?: 'openai:gpt-4o') =>
       execute({
         instructions: (isWhatsApp ? systemPrompt + whatsAppNotes : systemPrompt) + contextoCliente,
-        tools: [salvarNomeCliente, searchProducts, manageCart, consultarEstoque, gerarOrcamento, solicitarVendedor, enviarAudio],
+        tools: [salvarNomeCliente, searchProducts, manageCart, consultarEstoque, consultarCondicoesComerciais, gerarOrcamento, solicitarVendedor, enviarAudio],
         ...(model ? { model } : {}),
       })
 
