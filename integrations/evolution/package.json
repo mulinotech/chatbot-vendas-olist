@@ -1,0 +1,16 @@
+{
+  "name": "@mulinotech/evolution-integration",
+  "private": true,
+  "description": "Integração Botpress ↔ Evolution API (WhatsApp) para os bots da MulinoTech",
+  "scripts": {
+    "check:type": "tsc --noEmit",
+    "deploy": "node deploy.mjs"
+  },
+  "dependencies": {
+    "@botpress/sdk": "6.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}
