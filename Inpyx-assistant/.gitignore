@@ -36,3 +36,10 @@ logs/
 *.pid
 *.seed
 *.pid.lock
+
+# Tokens do Tiny (gerados por scripts/tiny-auth.mjs)
+.tiny-tokens.json
+
+# Áudio de teste gerado por test-elevenlabs.mjs
+teste-voz.mp3
+.tiny-seeded

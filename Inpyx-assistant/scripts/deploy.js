@@ -6,7 +6,11 @@ import os from 'os'
 const isWindows = os.platform() === 'win32'
 
 function runCommand(command, args, cwd, ignoreError = false) {
-  console.log(`Running: ${command} ${args.join(' ')}`)
+  // Mascara valores de segredos e tokens antes de imprimir o comando
+  const printable = args.map((arg) => (/^"?[A-Z_]+=/.test(arg) ? arg.replace(/=.*$/, '=***"') : arg))
+  const tokenIndex = args.indexOf('--token')
+  if (tokenIndex >= 0) printable[tokenIndex + 1] = '***'
+  console.log(`Running: ${command} ${printable.join(' ')}`)
   const result = spawnSync(command, args, {
     cwd,
     stdio: 'inherit',
@@ -135,6 +139,22 @@ if (fs.existsSync(compiledBotDefPath)) {
             productLink: z.string().describe('Link de compra direta do produto'),
             imageUrl: z.string().describe('URL da imagem do produto'),
             category: z.string().describe('Categoria do produto'),
+            keywords: z.string().optional().describe('Palavras-chave, órgãos e categorias do Tiny'),
+            variantId: z.number().nullable().optional().describe('ID da variação na Nuvemshop'),
+            tinyId: z.number().nullable().optional().describe('ID do produto no Tiny'),
+            stockQty: z.number().nullable().optional().describe('Quantidade disponível no Tiny'),
+            tinyUpdatedAt: z.string().nullable().optional().describe('Última alteração no Tiny'),
+          }),
+        },
+        "AtendimentosTable": {
+          schema: z.object({
+            nome: z.string().describe('Nome do cliente'),
+            telefone: z.string().describe('Telefone/WhatsApp do cliente'),
+            canal: z.string().describe('Canal de origem da conversa'),
+            motivo: z.string().describe('Motivo do encaminhamento'),
+            resumo: z.string().describe('Resumo do que o cliente precisa'),
+            conversationId: z.string().describe('ID da conversa no Botpress'),
+            status: z.string().describe('Situação: pendente, em_atendimento, concluido'),
           }),
         }
       },`
@@ -160,7 +180,43 @@ if (fs.existsSync(compiledBotDefPath)) {
   console.warn('Aviso: arquivo bot.definition.ts não encontrado para injeção de tabelas.')
 }
 
-// 4. Fazer o deploy do pacote gerado
+// 4. Montar os segredos do bot (o bp CLI exige os segredos obrigatórios no deploy)
+const envPath = path.join(projectDir, '.env')
+const env = fs.existsSync(envPath)
+  ? Object.fromEntries(
+      fs.readFileSync(envPath, 'utf8')
+        .split(/\r?\n/)
+        .filter((line) => line.includes('=') && !line.trim().startsWith('#'))
+        .map((line) => [line.slice(0, line.indexOf('=')).trim(), line.slice(line.indexOf('=') + 1).trim().replace(/^["']|["']$/g, '')])
+    )
+  : {}
+
+const secretValues = {
+  TINY_CLIENT_ID: env.TINY_CLIENT_ID,
+  TINY_CLIENT_SECRET: env.TINY_CLIENT_SECRET,
+  ELEVENLABS_API_KEY: env.ELEVENLABS_API_KEY,
+}
+
+// Refresh token do Tiny: só é enviado quando houver uma autorização nova (tiny-auth.mjs),
+// pois o bot troca o token a cada renovação e reenviar um antigo quebraria o acesso.
+const tokensPath = path.join(projectDir, '.tiny-tokens.json')
+const seedMarkerPath = path.join(projectDir, '.tiny-seeded')
+const tokensMtime = fs.existsSync(tokensPath) ? fs.statSync(tokensPath).mtimeMs : 0
+const seededMtime = fs.existsSync(seedMarkerPath) ? Number(fs.readFileSync(seedMarkerPath, 'utf8')) : 0
+const sendTinySeed = tokensMtime > 0 && tokensMtime !== seededMtime
+if (sendTinySeed) {
+  secretValues.TINY_REFRESH_TOKEN = JSON.parse(fs.readFileSync(tokensPath, 'utf8')).refresh_token
+  console.log('Enviando nova autorização do Tiny (refresh token) para o bot...')
+}
+
+const missingSecrets = Object.entries(secretValues).filter(([, value]) => !value).map(([key]) => key)
+if (missingSecrets.length > 0) {
+  console.error(`Erro: segredos ausentes no .env: ${missingSecrets.join(', ')}`)
+  process.exit(1)
+}
+const secretArgs = Object.entries(secretValues).flatMap(([key, value]) => ['--secrets', `"${key}=${value}"`])
+
+// 5. Fazer o deploy do pacote gerado
 console.log('Enviando bot ao Botpress Cloud...')
 runCommand('node', [
   bpCliPath,
@@ -168,8 +224,13 @@ runCommand('node', [
   '--noBuild',
   '--botId',
   botId,
+  ...secretArgs,
   '-y'
 ], botDir)
+
+if (sendTinySeed) {
+  fs.writeFileSync(seedMarkerPath, String(tokensMtime))
+}
 
 console.log('✅ Bot implantado com sucesso!')
 

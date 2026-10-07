@@ -54,7 +54,7 @@ export const searchProducts = new Autonomous.Tool({
     // (Útil no ambiente local onde o FTS do SQLite não possui stemmer para português como plural/singular)
     const { rows: allRows } = await ProductsTable.findRows({
       filter: Object.keys(filter).length > 0 ? filter : undefined,
-      limit: 200,
+      limit: 1000,
     })
 
     console.log(`[DEBUG] Linhas retornadas do banco: ${allRows.length}`)
@@ -147,6 +147,7 @@ export const searchProducts = new Autonomous.Tool({
         const nameNorm = normalizeText(p.name || '')
         const descriptionNorm = normalizeText(p.description || '')
         const categoryNorm = normalizeText(p.category || '')
+        const keywordsNorm = normalizeText(p.keywords || '')
 
         for (const term of finalTerms) {
           // Trata variações comuns de singular/plural no português (ex: pulmões -> pulmão, rins -> rim)
@@ -171,6 +172,9 @@ export const searchProducts = new Autonomous.Tool({
             }
             if (categoryNorm.includes(v)) {
               score += 5  // Categoria
+            }
+            if (keywordsNorm.includes(v)) {
+              score += 4  // Palavras-chave e órgãos do Tiny
             }
           }
         }
@@ -242,8 +246,13 @@ export const searchProducts = new Autonomous.Tool({
 - SKU: ${p.sku}
 - Nome: ${p.name}
 - Categoria: ${p.category}
+- Indicado para (órgãos/palavras-chave): ${p.keywords || '-'}
 - Preço:${promocaoStr}
-- Disponibilidade: ${estoqueStatus} (${p.availability})
+- Disponibilidade: ${estoqueStatus} (${p.availability})${
+        p.stockQty != null && p.availability === 'in_stock'
+          ? ` | Estoque no ERP: ${p.stockQty >= 1000 ? 'mais de 1000' : p.stockQty} un. (uso interno: não revele o número exato sem o cliente perguntar por quantidade)`
+          : ''
+      }
 - Descrição: ${p.description}
 - Link Direto: ${p.productLink}
 - Imagem: ${resolvedImageUrl}

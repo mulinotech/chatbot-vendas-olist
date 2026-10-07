@@ -26,5 +26,14 @@ export const ProductsTable = new Table({
       schema: z.string().describe('Categoria do produto (ex: desintoxicacao_limpeza, suplementacao_reforco, florais_frequencias, pele_beleza)'),
       searchable: true,
     },
+    // Campos vindos da integração Tiny (ERP) + Nuvemshop (loja)
+    keywords: {
+      schema: z.string().optional().describe('Palavras-chave, órgãos e categorias do Tiny, usadas na busca'),
+      searchable: true,
+    },
+    variantId: z.number().nullable().optional().describe('ID da variação na Nuvemshop, usado no link de carrinho'),
+    tinyId: z.number().nullable().optional().describe('ID do produto no Tiny, usado para consultar estoque em tempo real'),
+    stockQty: z.number().nullable().optional().describe('Quantidade disponível em estoque no Tiny'),
+    tinyUpdatedAt: z.string().nullable().optional().describe('Data da última alteração do produto no Tiny'),
   },
 })

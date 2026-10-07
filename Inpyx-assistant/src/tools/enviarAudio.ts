@@ -1,4 +1,4 @@
-import { Autonomous, z, context, user } from '@botpress/runtime'
+import { Autonomous, z, context, user, secrets } from '@botpress/runtime'
 
 /**
  * Tool: enviarAudio
@@ -14,23 +14,23 @@ import { Autonomous, z, context, user } from '@botpress/runtime'
  * MAX_AUDIO_CHARS para evitar erros de quota_exceeded.
  */
 
-const ELEVENLABS_API_KEY = 'sk_cc20253d81176de4ab8d074036b3386019ba6929be38e02c'
+// Chave da API lida do cofre de segredos (adk secret:set ELEVENLABS_API_KEY ... [--prod])
+const getElevenLabsApiKey = () =>
+  ((secrets as Record<string, string | undefined>).ELEVENLABS_API_KEY ?? process.env.ELEVENLABS_API_KEY)
+    ?.trim()
+    .replace(/^["']|["']$/g, '')
 
-// Vozes disponíveis (pré-fabricadas, acessíveis via API em qualquer plano):
-// Para usar a voz "Raquel" da Biblioteca da ElevenLabs, o plano Creator ou superior é necessário.
-// Enquanto isso, usamos Sarah (pt-BR compatível) ou substitua pelo ID da Raquel quando disponível.
-const VOICE_ID_PADRAO = 'EXAVITQu4vr4xnSDxMaL' // Sarah — voz pré-fabricada (gratuita via API)
-// const VOICE_ID_RAQUEL = 'SEU_VOICE_ID_RAQUEL'  // Adicione aqui quando tiver o ID da Raquel
+// Voz escolhida na ElevenLabs (sem sotaque americano carregado)
+const VOICE_ID_PADRAO = 'x8FWrDHAK5xiFTJLpnHq'
 
 /**
  * Número máximo de caracteres enviados ao ElevenLabs por chamada.
  * Cada caractere = 1 crédito. Ajuste conforme sua cota mensal disponível.
  * - Plano Free:    10.000 créditos/mês  → ~66 mensagens de áudio
  * - Plano Starter: 30.000 créditos/mês  → ~200 mensagens de áudio
- * ⚠️ Com apenas 175 créditos restantes, mantemos em 150 para caber na cota atual.
- *    Após renovação mensal, pode aumentar para 250.
+ * Com a chave nova, o limite subiu para 300: frases completas, sem corte no meio.
  */
-const MAX_AUDIO_CHARS = 150
+const MAX_AUDIO_CHARS = 300
 
 export const enviarAudio = new Autonomous.Tool({
   name: 'enviarAudio',
@@ -44,7 +44,7 @@ export const enviarAudio = new Autonomous.Tool({
       .string()
       .describe(
         'O texto exato que a Bila deve falar em áudio. ' +
-          'Seja concisa e acolhedora — máximo 200 caracteres para garantir geração bem-sucedida.'
+          'Seja concisa e acolhedora — máximo 250 caracteres, sempre com frases completas. Nunca termine prometendo buscar algo depois.'
       ),
   }),
 
@@ -78,6 +78,11 @@ export const enviarAudio = new Autonomous.Tool({
       }
 
       // ── 3. Chamar API do ElevenLabs ─────────────────────────────────────────
+      const ELEVENLABS_API_KEY = getElevenLabsApiKey()
+      if (!ELEVENLABS_API_KEY) {
+        console.error('[enviarAudio] Segredo ELEVENLABS_API_KEY não configurado')
+        return 'Áudio indisponível no momento. Responderei por texto.'
+      }
       const voiceId = VOICE_ID_PADRAO
       const elevenLabsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=${outputFormat}`
 

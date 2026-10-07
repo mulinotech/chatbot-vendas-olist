@@ -1,5 +1,7 @@
 import { Autonomous, z, user } from '@botpress/runtime'
 import { ProductsTable } from '../tables/Products'
+import { getTinyStock } from '../lib/tiny'
+import { buildCartUrl } from '../lib/nuvemshop'
 
 export const manageCart = new Autonomous.Tool({
   name: 'manageCart',
@@ -44,6 +46,30 @@ export const manageCart = new Autonomous.Tool({
       const product = rows[0]
       const price = product.salePrice !== null && product.salePrice !== undefined ? product.salePrice : product.price
 
+      // Confere o estoque em tempo real no Tiny antes de colocar no carrinho
+      if (product.tinyId) {
+        try {
+          const { disponivel } = await getTinyStock(product.tinyId)
+          const inStock = disponivel > 0
+          await ProductsTable.updateRows({
+            rows: [{ id: product.id, stockQty: Math.max(0, disponivel), availability: inStock ? 'in_stock' : 'out_of_stock' }],
+          })
+          if (!inStock) {
+            return `Produto ${product.name} (SKU ${cleanSku}) está ESGOTADO no momento (estoque conferido agora no ERP). Não foi adicionado ao carrinho. Ofereça uma alternativa similar ou avisar quando voltar.`
+          }
+          const jaNoCarrinho = carrinho.find((item) => item.sku === cleanSku)?.quantity ?? 0
+          if (jaNoCarrinho + quantity > disponivel) {
+            return `Estoque insuficiente: o cliente quer ${jaNoCarrinho + quantity} un. de ${product.name} (SKU ${cleanSku}), mas há apenas ${disponivel} un. disponíveis agora. Nada foi alterado no carrinho. Informe o cliente, ofereça adicionar as ${disponivel - jaNoCarrinho} un. disponíveis e/ou encaminhar para um vendedor (solicitarVendedor) verificar reposição.`
+          }
+        } catch (err) {
+          // Se o Tiny estiver fora do ar, segue com a disponibilidade da última sincronização
+          console.error('Erro ao consultar estoque no Tiny:', err)
+          if (product.availability !== 'in_stock') {
+            return `Produto ${product.name} (SKU ${cleanSku}) está esgotado. Não foi adicionado ao carrinho. Ofereça uma alternativa similar.`
+          }
+        }
+      }
+
       // Verificar se o item já está no carrinho
       const index = carrinho.findIndex((item) => item.sku === cleanSku)
       if (index > -1) {
@@ -87,10 +113,18 @@ export const manageCart = new Autonomous.Tool({
 
     const total = carrinho.reduce((sum, item) => sum + item.price * item.quantity, 0)
     
-    // Pulo do Gato: Montagem do link de checkout do e-commerce
-    // Ex: https://herrmannhealth.com.br/carrinho?itens=SKU:QTD,SKU2:QTD
-    const queryItens = carrinho.map((item) => `${item.sku}:${item.quantity}`).join(',')
-    const checkoutUrl = `https://herrmannhealth.com.br/carrinho?itens=${queryItens}`
+    // Pulo do Gato: link de carrinho da Nuvemshop, que abre o checkout com os itens já adicionados
+    // Ex: https://herrmannhealth.com.br/comprar/1537849830-2,1537862958-1/
+    const { rows: cartRows } = await ProductsTable.findRows({
+      filter: { sku: { $in: carrinho.map((item) => item.sku) } },
+      limit: carrinho.length,
+    })
+    const variantBySku = new Map(cartRows.map((row) => [row.sku, row.variantId]))
+    const linkItems = carrinho
+      .filter((item) => variantBySku.get(item.sku))
+      .map((item) => ({ variantId: variantBySku.get(item.sku)!, quantity: item.quantity }))
+    const checkoutUrl = linkItems.length > 0 ? buildCartUrl(linkItems) : null
+    const missingFromLink = carrinho.filter((item) => !variantBySku.get(item.sku)).map((item) => item.name)
 
     const itemLines = carrinho.map(
       (item) => `- ${item.name} (SKU: ${item.sku}) - Qtd: ${item.quantity} - Valor Unitário: R$ ${item.price.toFixed(2)} - Total: R$ ${(item.price * item.quantity).toFixed(2)}`
@@ -100,7 +134,9 @@ export const manageCart = new Autonomous.Tool({
 ${itemLines}
 
 Total do Investimento: R$ ${total.toFixed(2)}
-Link de Finalização de Compra (Checkout Seguro): ${checkoutUrl}
+Link de Finalização de Compra (Checkout Seguro): ${checkoutUrl ?? 'indisponível no momento'}${
+      missingFromLink.length > 0 ? `\nAtenção: estes itens não estão à venda na loja online e ficaram fora do link: ${missingFromLink.join(', ')}` : ''
+    }
 ----------------------------------------`
   },
 })

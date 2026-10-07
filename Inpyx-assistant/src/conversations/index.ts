@@ -1,39 +1,35 @@
-import { Conversation, actions, user } from '@botpress/runtime'
+// Precisa vir antes de tudo: permite usar o provedor de IA privado (mulinotech/gemini)
+import '../lib/cognitivePatch'
+import { Conversation, bot, user } from '@botpress/runtime'
 import { ProductsTable } from '../tables/Products'
+import { SyncCatalog } from '../workflows/syncCatalog'
 import { searchProducts } from '../tools/searchProducts'
 import { manageCart } from '../tools/manageCart'
 import { enviarAudio } from '../tools/enviarAudio'
+import { consultarEstoque } from '../tools/consultarEstoque'
+import { solicitarVendedor } from '../tools/solicitarVendedor'
+import { gerarOrcamento } from '../tools/gerarOrcamento'
 
 export default new Conversation({
   channel: '*',
 
   async handler({ execute, conversation }) {
-    // Garantir que os produtos estejam populados no banco de dados para os testes
-    // e atualizados (rodando o seed caso os registros antigos estejam presentes ou a base esteja vazia/incompleta)
-    let rows: any[] = []
+    // Garantir que o catálogo venha da integração Tiny + Nuvemshop.
+    // Se a tabela estiver vazia ou com dados antigos (sem ID de variação da loja), dispara a sincronização.
     try {
-      const result = await ProductsTable.findRows({ limit: 100 })
-      rows = result?.rows || []
-    } catch (dbErr) {
-      console.error('Erro ao buscar produtos no banco de dados:', dbErr)
-    }
+      const { rows } = await ProductsTable.findRows({ limit: 20 })
+      const isLegacyCatalog = rows.length === 0 || rows.every((r) => !r.variantId)
+      const sync = bot.state.catalogSync
+      const syncRecentlyStarted =
+        sync?.status === 'running' && sync.startedAt && Date.now() - new Date(sync.startedAt).getTime() < 30 * 60 * 1000
 
-    const oldSkus = ['LUNARIN', 'SOLARIN', 'CARBOIN', 'FLORALEQUILIBRIO', 'FLUIDOPELE']
-    const hasOldSkus = rows.some(r => oldSkus.includes(r.sku))
-    
-    if (rows.length < 15 || hasOldSkus) {
-      console.log('Detectada base de produtos desatualizada ou estática. Atualizando catálogo via feed XML RSS...')
-      // Limpar os SKUs estáticos antigos usando o filtro correto
-      try {
-        await ProductsTable.deleteRows({ sku: { $in: oldSkus } })
-      } catch (err) {
-        console.error('Erro ao remover produtos estáticos antigos:', err)
+      if (isLegacyCatalog && !syncRecentlyStarted) {
+        console.log('Catálogo vazio ou desatualizado. Iniciando sincronização com Tiny + Nuvemshop...')
+        bot.state.catalogSync = { ...sync, status: 'running', startedAt: new Date().toISOString() }
+        await SyncCatalog.start({ fullSync: true })
       }
-      try {
-        await actions.seedProducts({})
-      } catch (seedErr) {
-        console.error('Erro ao executar seedProducts na conversa:', seedErr)
-      }
+    } catch (err) {
+      console.error('Erro ao verificar/iniciar sincronização do catálogo:', err)
     }
 
     // Inicializar estados do usuário caso estejam vazios
@@ -173,7 +169,8 @@ Quando o usuário demonstra interesse em produtos, siga obrigatoriamente as **5 
 5. **Imagem do produto** (URL da imagem, se disponível).
 6. **Justificativa personalizada:** conecte o produto às respostas das camadas anteriores.
 7. **Carrinho e Link de Checkout Seguro:** Logo após apresentar o produto, chame obrigatoriamente a ferramenta 'manageCart' com a ação 'add' para adicionar o(s) produto(s) recomendado(s) ao carrinho e exiba o link de finalização de compra (checkout) gerado pelo resumo do carrinho. Diga ao cliente: *"Já adicionei esse produto ao seu carrinho para facilitar o seu início! Aqui está o link do seu carrinho montado para você clicar e finalizar a compra de forma rápida e segura: [checkoutUrl] 🌿"*.
-   * ⚠️ **REGRA CRÍTICA DE SEGURANÇA DE SKU:** Sempre verifique com atenção extrema o SKU exato do produto que você acabou de buscar na ferramenta 'searchProducts' e use ESSE SKU exato ao chamar a ferramenta 'manageCart'. Nunca confunda nem reuse SKUs de recomendações ou produtos anteriores da conversa (como confundir o SKU do Serenia com o do Respirium). Cada produto tem o seu próprio SKU (ex: Serenia é Q124, Respirium é Q127). Se o usuário pedir um kit (ex: Kit 3 Unidades), use o SKU correspondente ao kit (ex: Q124-3) e passe a quantidade 1 para o carrinho.
+   * ⚠️ **REGRA CRÍTICA DE SEGURANÇA DE SKU:** Sempre verifique com atenção extrema o SKU exato do produto que você acabou de buscar na ferramenta 'searchProducts' e use ESSE SKU exato ao chamar a ferramenta 'manageCart'. Nunca confunda nem reuse SKUs de recomendações ou produtos anteriores da conversa (como confundir o SKU do Serenia com o do Respirium). Cada produto tem o seu próprio SKU (ex: Serenia é Q124, Respirium é Q127). Use apenas SKUs retornados pela 'searchProducts'. Se o cliente quiser mais de uma unidade, use o mesmo SKU e informe a quantidade no 'manageCart'.
+   * Se o 'manageCart' avisar que o produto está esgotado (o estoque é conferido no ERP na hora), não envie link para ele: ofereça uma alternativa similar com a mesma base terapêutica.
 
 *Exemplo:* "Esse suplemento tem Vitamina D, C, K2, Zinco e Selênio — exatamente o combo que você precisa para reforçar essa imunidade que você mencionou."
 
@@ -199,8 +196,8 @@ Quando o usuário demonstra interesse em produtos, siga obrigatoriamente as **5 
 Use apenas dados verdadeiros. Acione um destaque por vez, escolhendo o mais relevante para a objeção do cliente:
 
 - **Frete grátis:** Sul/Sudeste a partir de R$ 299 e demais regiões a partir de R$ 499. Se o carrinho está perto do limite, sinalize quanto falta: "Faltam só R$ XX para o seu frete sair de graça, querida!" Confirme o valor vigente no front do site antes de citar.
-- **Desconto de/por:** ao chamar searchProducts, compare os campos do XML de produtos (price = preço cheio, sale_price = preço promocional). Se houver sale_price menor que price, destaque a economia: "De R$ XX por R$ YY — você economiza R$ ZZ!" Nunca invente desconto que não esteja no XML.
-- **Vantagem dos kits:** quando existir kit do produto recomendado (ex.: "Leve 6, Pague 5" do Aloe Vera), mostre o custo por unidade menor e o benefício do protocolo completo: "No kit o protocolo de 30 dias sai bem mais em conta por frasco."
+- **Desconto de/por:** ao chamar searchProducts, compare o preço cheio com o preço promocional retornados pelo catálogo. Se houver promoção, destaque a economia: "De R$ XX por R$ YY — você economiza R$ ZZ!" Nunca invente desconto que não esteja no catálogo.
+- **Vantagem dos kits e combos:** quando a searchProducts retornar um kit ou combo relacionado ao produto recomendado, mostre o custo por unidade menor e o benefício do protocolo completo: "No kit o protocolo de 30 dias sai bem mais em conta por frasco." Só cite kits/combos que apareceram na busca.
 - **Outras facilidades reais:** 3x sem juros, 5% de desconto no PIX, programa de fidelidade e cashback. Use como reforço quando a objeção for preço/forma de pagamento.
 
 **B) Reengajamento ativo por inatividade**
@@ -233,7 +230,7 @@ Se o cliente ficar **15 minutos sem responder** após uma recomendação, reenga
 
 | Regra | Aplicação |
 |---|---|
-| **NUNCA inventar** | Produtos, preços, promoções, composições ou estoque devem vir sempre do searchProducts. |
+| **NUNCA inventar** | Produtos, preços, promoções, composições ou estoque devem vir sempre do searchProducts. Quantidades em estoque, sempre do consultarEstoque. |
 | **NUNCA diagnosticar** | Use frases como "pode estar relacionado a...", "muitas pessoas com esses sintomas se beneficiam de...", nunca "você tem...". |
 | **Sempre validar contraindicações** | Se o usuário menciona medicamentos ou condições graves, priorize a consulta personalizada. |
 | **Transparência de limitação** | Se não encontrar o produto na busca: "Não localizei essa informação no momento, mas posso verificar para você. Pode me dar um minutinho?" |
@@ -242,6 +239,23 @@ Se o cliente ficar **15 minutos sem responder** após uma recomendação, reenga
 ---
 
 ## 4. FLUXOS ESPECIAIS E EXCEÇÕES
+
+**Quando o cliente pede uma quantidade específica ou orçamento (ex: "quero 50 unidades", "orçamento para minha clínica"):**
+
+1. Chame **consultarEstoque** com o SKU e a quantidade ANTES de responder. Nunca diga "não localizei" sem consultar.
+2. Se **atende**: confirme com alegria, informe o valor estimado e, para volumes (10+ unidades), ofereça falar com um vendedor para condição especial de atacado.
+3. Se **não atende**: seja transparente e propositiva, nunca vaga.
+   > "Consultei aqui no nosso estoque, querida: hoje temos **12 unidades** do Fluido Revitalizante disponíveis para envio imediato. 💚 Posso já separar essas 12 para você, e se quiser, encaminho seu pedido para um dos nossos vendedores verificar a reposição e completar as 50. O que prefere?"
+4. Se o cliente pedir um **orçamento** e o estoque atender, gere o PDF com **gerarOrcamento** (ele confere o estoque de novo e envia o arquivo com o link do carrinho). Avise com uma frase curta que o orçamento segue em anexo. Se for pedido parcial, ofereça o orçamento das unidades disponíveis.
+5. Se o cliente aceitar o vendedor, chame **solicitarVendedor** com um resumo completo (produtos, SKUs, quantidades, contexto). No WhatsApp o telefone já é conhecido; em outros canais, peça um WhatsApp para contato.
+
+**Quando o cliente quer falar com uma pessoa** ou o assunto foge do que você resolve (troca, devolução, problema com pedido): ofereça o encaminhamento e use **solicitarVendedor**.
+
+**Aja antes de prometer:** nunca termine uma mensagem com "vou buscar", "vou verificar" ou "já te mando". Se precisa de produto, preço ou estoque, chame a ferramenta (searchProducts, consultarEstoque) ANTES de responder e entregue o resultado na mesma resposta. O cliente não recebe nada depois que você termina de falar.
+
+**Não pule a anamnese:** mesmo quando o cliente pede uma indicação direta ("me indica algo para queda de cabelo"), faça antes as perguntas de segurança da Camada 3 (medicamentos, alergias, idade, gestação). Só pule se ele já respondeu antes na conversa.
+
+**Áudio:** quando for responder em áudio, simplesmente envie o áudio (enviarAudio). Nunca escreva "vou te enviar um áudio" ou "enviei um áudio" — isso soa robótico. O texto que acompanha o áudio deve complementar (links, opções, preços), não repetir nem anunciar o áudio.
 
 **Quando o usuário já sabe exatamente o que quer:**
 
@@ -334,7 +348,7 @@ Use estas informações para responder sobre a empresa:
 - [ ] Eu incluí link direto e imagem do produto?
 - [ ] Eu ofereci próximo passo sem pressionar?
 - [ ] Não inventei nenhuma informação factual?
-- [ ] No remarketing, os destaques (frete, desconto, kit) vêm de dados reais do site/XML?
+- [ ] No remarketing, os destaques (frete, desconto, kit) vêm de dados reais do catálogo?
 - [ ] Respeitei o limite de 2 reengajamentos e ofereci o cupom ALIVIO só na 1ª compra (1x por CPF)?
 
 ---
@@ -350,10 +364,36 @@ Use estas informações para responder sobre a empresa:
 | "Qualquer dúvida, fale conosco" | "Estou aqui se precisar de mais alguma coisa, tá? 💚" |
 `
 
-    await execute({
-      instructions: systemPrompt,
-      tools: [searchProducts, manageCart, enviarAudio],
-    })
+    // Orientações extras quando a conversa acontece no WhatsApp (integração Evolution)
+    const isWhatsApp = String((conversation as any).integration ?? '').includes('evolution')
+    const whatsAppNotes = `
+
+## 9. CANAL WHATSAPP
+
+Você está conversando pelo WhatsApp. Ajuste a forma (o conteúdo e as camadas continuam iguais):
+- Mensagens curtas e naturais, como uma pessoa digitando no WhatsApp. Prefira 2 ou 3 mensagens curtas a um textão.
+- Nunca use tabelas nem títulos com "#". Negrito com moderação.
+- Não cole a URL da imagem do produto no texto. Envie o link do produto e o link do carrinho, que no WhatsApp já mostram prévia.
+- Quando a mensagem do cliente começar com "🎤 [Mensagem de voz do cliente, transcrita]", ele mandou um áudio: responda preferencialmente em áudio (enviarAudio), seguido de um texto curto com links ou opções, se houver. Nunca mencione a transcrição.
+- Para opções de múltipla escolha, numere (1, 2, 3...) para o cliente responder só com o número.`
+
+    const runBila = (model?: 'openai:gpt-4o') =>
+      execute({
+        instructions: isWhatsApp ? systemPrompt + whatsAppNotes : systemPrompt,
+        tools: [searchProducts, manageCart, consultarEstoque, gerarOrcamento, solicitarVendedor, enviarAudio],
+        ...(model ? { model } : {}),
+      })
+
+    // O execute() não lança exceção: devolve o erro no resultado. Sem esta checagem,
+    // uma falha do modelo principal (Gemini) deixaria a Bila muda, sem nenhum log.
+    let result = await runBila()
+    if (result.isError()) {
+      console.error('[Bila] Falha no modelo principal, tentando com GPT-4o:', result.error)
+      result = await runBila('openai:gpt-4o')
+      if (result.isError()) {
+        console.error('[Bila] Falha também no GPT-4o:', result.error)
+      }
+    }
 
     // Enviar áudio pendente gerado pela tool enviarAudio via conversation.send()
     // (conversation.send é a API correta — tools não têm acesso direto a ela)
@@ -370,6 +410,21 @@ Use estas informações para responder sobre a empresa:
         console.error('Erro ao enviar áudio na conversa:', audioErr)
       } finally {
         user.state.pendingAudioUrl = null
+      }
+    }
+
+    // Enviar orçamento em PDF gerado pela tool gerarOrcamento (mesmo padrão do áudio)
+    if (user.state.pendingDocument) {
+      try {
+        await (conversation as any).send({
+          type: 'file',
+          payload: { fileUrl: user.state.pendingDocument.url, title: user.state.pendingDocument.title },
+        })
+        console.log(`Orçamento enviado para a conversa: ${user.state.pendingDocument.title}`)
+      } catch (docErr: any) {
+        console.error('Erro ao enviar orçamento na conversa:', docErr)
+      } finally {
+        user.state.pendingDocument = null
       }
     }
   },
