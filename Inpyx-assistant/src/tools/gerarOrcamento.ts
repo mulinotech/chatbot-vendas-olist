@@ -3,6 +3,7 @@ import { ProductsTable } from '../tables/Products'
 import { getTinyStock } from '../lib/tiny'
 import { buildCartUrl, STORE_URL } from '../lib/nuvemshop'
 import { gerarOrcamentoPdf } from '../lib/orcamentoPdf'
+import { nomeDoCliente, nomeValido } from '../lib/cliente'
 
 // Gera um orçamento em PDF (com estoque conferido no ERP e link de carrinho) e deixa pronto
 // para o handler da conversa enviar como arquivo, no mesmo padrão do áudio (pendingAudioUrl).
@@ -17,7 +18,7 @@ export const gerarOrcamento = new Autonomous.Tool({
     'O estoque é conferido novamente no ERP; se algum item não atender, nada é gerado e você recebe as quantidades disponíveis.',
 
   input: z.object({
-    nomeCliente: z.string().describe('Nome do cliente, como ele se apresentou na conversa'),
+    nomeCliente: z.string().optional().describe('Nome real do cliente (nunca vocativos como "querida"). Se já foi salvo com salvarNomeCliente, pode omitir.'),
     itens: z
       .array(
         z.object({
@@ -31,6 +32,13 @@ export const gerarOrcamento = new Autonomous.Tool({
   output: z.string(),
 
   handler: async ({ nomeCliente, itens }) => {
+    // O orçamento sai sempre no nome real do cliente
+    const cliente = nomeDoCliente() ?? nomeValido(nomeCliente)
+    if (!cliente) {
+      return 'Orçamento NÃO gerado: ainda não sei o nome do cliente. Pergunte com carinho o nome completo para colocar no orçamento, salve com salvarNomeCliente e gere de novo.'
+    }
+    if (!user.state.nomeCliente) user.state.nomeCliente = cliente
+
     const linhas = []
     const faltas: string[] = []
 
@@ -77,7 +85,7 @@ export const gerarOrcamento = new Autonomous.Tool({
       numero,
       data: agora,
       validadeDias: VALIDADE_DIAS,
-      cliente: nomeCliente,
+      cliente,
       itens: itensPdf,
       linkCarrinho,
       loja: { nome: 'Herrmann Health', site: STORE_URL.replace(/^https?:\/\//, ''), contato: 'WhatsApp (11) 94524-2662' },
@@ -100,7 +108,7 @@ export const gerarOrcamento = new Autonomous.Tool({
 
     // O handler da conversa envia o arquivo depois que a Bila terminar de responder
     user.state.pendingDocument = { url: file.url, title: `Orçamento ${numero}.pdf` }
-    console.log(`[gerarOrcamento] ${numero} gerado para ${nomeCliente}: R$ ${total.toFixed(2)}`)
+    console.log(`[gerarOrcamento] ${numero} gerado para ${cliente}: R$ ${total.toFixed(2)}`)
 
     return `Orçamento ${numero} gerado (total R$ ${total.toFixed(2)}, no PIX R$ ${(total * 0.95).toFixed(2)}, válido por ${VALIDADE_DIAS} dias) ` +
       `e será enviado como PDF logo após sua mensagem. Escreva uma mensagem curta e calorosa avisando que o orçamento segue em anexo, ` +

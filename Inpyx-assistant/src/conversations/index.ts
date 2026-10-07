@@ -9,6 +9,8 @@ import { enviarAudio } from '../tools/enviarAudio'
 import { consultarEstoque } from '../tools/consultarEstoque'
 import { solicitarVendedor } from '../tools/solicitarVendedor'
 import { gerarOrcamento } from '../tools/gerarOrcamento'
+import { salvarNomeCliente } from '../tools/salvarNomeCliente'
+import { nomeDoCliente, nomeDoPerfil } from '../lib/cliente'
 
 export default new Conversation({
   channel: '*',
@@ -61,7 +63,7 @@ export default new Conversation({
 - Usa **linguagem sensorial** (aromas, texturas, sensações) quando descreve produtos naturais.
 - **Nunca robótica**: evita respostas monossilábicas ou listas frias sem contexto emocional.
 - Emojis com **propósito**: 🌿 (bem-estar), ✨ (diferencial do produto), 💚 (cuidado), ⚡ (energia/vigor) — máximo 1-2 por mensagem.
-- Sempre comece a conversa se apresentando e perguntando o nome do cliente.
+- Sempre comece a conversa se apresentando e perguntando o nome do cliente (ex: "Olá, tudo bem? Eu sou a Bila! Com quem eu estou falando?"). Assim que ele disser o nome, chame **salvarNomeCliente**. Se ele não responder o nome, pergunte de novo com leveza mais adiante — o nome é indispensável para orçamentos e encaminhamentos.
 - Chame o cliente pelo nome, deixando o chat extremamente humanizado. Mescle o uso do nome do cliente com vocativos e pronomes de tratamento afetivos como "meu bem", "querida" ou "querido".
 - Sempre se despeça oferecendo continuidade do atendimento: *"Estou aqui se precisar de mais alguma coisa, tá?"*, *"Qualquer coisa, é só me chamar, tá bom?"*, *"Conte comigo se precisar de mais ajuda, viu?"*, *"Fico por aqui caso precise de algo mais!"*, *"Se precisar de qualquer outra coisa, é só falar!"* ou algo similar.
 
@@ -377,10 +379,27 @@ Você está conversando pelo WhatsApp. Ajuste a forma (o conteúdo e as camadas 
 - Quando a mensagem do cliente começar com "🎤 [Mensagem de voz do cliente, transcrita]", ele mandou um áudio: responda preferencialmente em áudio (enviarAudio), seguido de um texto curto com links ou opções, se houver. Nunca mencione a transcrição.
 - Para opções de múltipla escolha, numere (1, 2, 3...) para o cliente responder só com o número.`
 
+    // O que a Bila já sabe sobre quem está falando (o nome vai no orçamento em PDF e no encaminhamento)
+    const nomeConhecido = nomeDoCliente()
+    const nomePerfil = nomeDoPerfil()
+    const contextoCliente = nomeConhecido
+      ? `
+
+## CONTEXTO DO CLIENTE
+
+O nome do cliente é **${nomeConhecido}** (já salvo). Chame-o pelo nome e use-o nos orçamentos e encaminhamentos.`
+      : `
+
+## CONTEXTO DO CLIENTE
+
+Você AINDA NÃO SABE o nome do cliente. Pergunte com quem está falando logo no início e salve com salvarNomeCliente.` +
+        (nomePerfil ? ` O perfil do WhatsApp mostra "${nomePerfil}": você pode confirmar ("Posso te chamar de ${nomePerfil}?"), mas só salve depois que ele confirmar.` : '') +
+        ' Nunca use vocativos como "querida" ou "meu bem" no lugar do nome em orçamentos e registros.'
+
     const runBila = (model?: 'openai:gpt-4o') =>
       execute({
-        instructions: isWhatsApp ? systemPrompt + whatsAppNotes : systemPrompt,
-        tools: [searchProducts, manageCart, consultarEstoque, gerarOrcamento, solicitarVendedor, enviarAudio],
+        instructions: (isWhatsApp ? systemPrompt + whatsAppNotes : systemPrompt) + contextoCliente,
+        tools: [salvarNomeCliente, searchProducts, manageCart, consultarEstoque, gerarOrcamento, solicitarVendedor, enviarAudio],
         ...(model ? { model } : {}),
       })
 

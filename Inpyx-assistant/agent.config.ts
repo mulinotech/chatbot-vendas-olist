@@ -67,6 +67,7 @@ export default defineConfig({
             })).optional(),
             pendingAudioUrl: z.string().nullable().optional(),
             pendingDocument: z.object({ url: z.string(), title: z.string() }).nullable().optional(),
+            nomeCliente: z.string().nullable().optional(), // nome real do cliente, salvo pela tool salvarNomeCliente
         }),
     },
 

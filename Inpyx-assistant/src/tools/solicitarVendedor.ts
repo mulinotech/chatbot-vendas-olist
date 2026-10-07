@@ -1,5 +1,6 @@
 import { Autonomous, z, context } from '@botpress/runtime'
 import { AtendimentosTable } from '../tables/Atendimentos'
+import { nomeDoCliente, nomeValido } from '../lib/cliente'
 
 // Encaminha o cliente para um vendedor humano, registrando o pedido na AtendimentosTable.
 
@@ -11,7 +12,7 @@ export const solicitarVendedor = new Autonomous.Tool({
     'Só chame DEPOIS que o cliente aceitar ser encaminhado.',
 
   input: z.object({
-    nome: z.string().describe('Nome do cliente, como ele se apresentou na conversa'),
+    nome: z.string().optional().describe('Nome real do cliente (nunca vocativos como "querida"). Se já foi salvo com salvarNomeCliente, pode omitir.'),
     motivo: z
       .enum(['estoque_insuficiente', 'orcamento_volume', 'pedido_do_cliente', 'duvida_complexa', 'outro'])
       .describe('Motivo do encaminhamento'),
@@ -21,7 +22,12 @@ export const solicitarVendedor = new Autonomous.Tool({
 
   output: z.string(),
 
-  handler: async ({ nome, motivo, resumo, telefone }) => {
+  handler: async ({ nome: nomeInformado, motivo, resumo, telefone }) => {
+    const nome = nomeDoCliente() ?? nomeValido(nomeInformado)
+    if (!nome) {
+      return 'Encaminhamento NÃO registrado: ainda não sei o nome do cliente. Pergunte o nome com carinho, salve com salvarNomeCliente e chame solicitarVendedor de novo.'
+    }
+
     const conversation = context.get('conversation', { optional: true }) as any
     const user = context.get('user', { optional: true }) as any
     const canal = String(conversation?.integration ?? 'desconhecido').includes('evolution') ? 'whatsapp' : String(conversation?.integration ?? 'desconhecido')
